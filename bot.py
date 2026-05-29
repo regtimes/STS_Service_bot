@@ -1,9 +1,15 @@
 import sqlite3
+
+
+import os
+from dotenv import load_dotenv
 from telebot import TeleBot
 
-# Токен вашего бота от @BotFather
-TOKEN = "8090467638:AAEeR5YLb9zPx3L9MqPHbh27mfWuhu0bjZ0"
+load_dotenv() # Загружает данные из файла .env
+
+TOKEN = os.getenv("TOKEN") # Безопасно берет токен из системы
 bot = TeleBot(TOKEN)
+
 
 
 # 1. Инициализация базы данных склад.db
@@ -66,7 +72,33 @@ def add_cmd(message):
         bot.reply_to(message, "❌ Ошибка. Пишите так: `/add Кирпич 50`")
 
 
+
+# Обработка команды /list для просмотра всего склада
+@bot.message_handler(commands=['list'])
+def list_cmd(message):
+    conn = sqlite3.connect("sklad.db")
+    cursor = conn.cursor()
+    # Выбираем все товары из таблицы items
+    cursor.execute("SELECT name, quantity FROM items")
+    rows = cursor.fetchall()
+    conn.close()
+
+    if not rows:
+        bot.reply_to(message, "📦 Склад пуст!")
+        return
+
+    # Формируем красивый текст списка
+    text = "📋 **Текущие остатки на складе:**\n\n"
+    for row in rows:
+        text += f"🔹 {row[0]}: {row[1]} шт.\n"
+
+    bot.reply_to(message, text, parse_mode="Markdown")
+
+
+
 if __name__ == "__main__":
     init_db()  # Запускаем БД
     print("Бот успешно запущен локально...")
     bot.infinity_polling()
+
+
