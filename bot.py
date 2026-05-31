@@ -1,11 +1,27 @@
 import sqlite3
-
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
 
 import os
 from dotenv import load_dotenv
 from telebot import TeleBot
 
 load_dotenv() # Загружает данные из файла .env
+
+app = FastAPI()
+
+
+@app.get("/", response_class=HTMLResponse)
+async def read_item():
+    # Находим путь к вашему файлу index.html
+    path_to_html = os.path.join(os.path.dirname(__file__), "index.html")
+
+    with open(path_to_html, "r", encoding="utf-8") as file:
+        html_content = file.read()
+
+    return HTMLResponse(content=html_content, status_code=200)
+
+
 
 TOKEN = os.getenv("TOKEN") # Безопасно берет токен из системы
 bot = TeleBot(TOKEN)

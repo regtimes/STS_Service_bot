@@ -2,3 +2,4 @@
 sklad.db
 .idea/
 .env
+*.iml
