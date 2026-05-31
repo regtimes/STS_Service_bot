@@ -4,64 +4,39 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Склад STS</title>
-    <!-- Официальный скрипт Telegram -->
-    <script src="https://telegram.org"></script>
-    <!-- Мощная библиотека для чтения ЛЮБЫХ штрихкодов и QR -->
-    <script src="https://unpkg.com"></script>
-
+    <!-- ПРАВИЛЬНОЕ ПОДКЛЮЧЕНИЕ SDK TELEGRAM -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
-        body { font-family: sans-serif; background: var(--tg-theme-bg-color, #fff); color: var(--tg-theme-text-color, #000); text-align: center; padding: 20px; }
-        button { background: var(--tg-theme-button-color, #2481cc); color: var(--tg-theme-button-text-color, #fff); border: none; padding: 12px 20px; border-radius: 8px; font-size: 16px; cursor: pointer; margin-top: 20px; width: 100%; max-width: 300px; }
-        /* Контейнер, где будет отображаться видео с камеры */
-        #reader { width: 100%; max-width: 400px; margin: 20px auto; border-radius: 12px; overflow: hidden; }
+        body { font-family: sans-serif; background: var(--tg-theme-bg-color); color: var(--tg-theme-text-color); text-align: center; padding: 20px; }
+        button { background: var(--tg-theme-button-color); color: var(--tg-theme-button-text-color); border: none; padding: 12px 20px; border-radius: 8px; font-size: 16px; cursor: pointer; margin-top: 20px; }
     </style>
 </head>
 <body>
     <h2>📦 Складской терминал STS</h2>
     <p>Добро пожаловать в систему учета остатков!</p>
 
-    <!-- Место для отображения камеры -->
-    <div id="reader"></div>
-
-    <button onclick="startScanning()">Включить сканер</button>
+    <!-- Кнопка вызова встроенного сканера Telegram -->
+    <button onclick="scanBarcode()">Сканировать штрихкод</button>
 
     <script>
+        // 1. Инициализация объекта
         const tg = window.Telegram.WebApp;
+
+        // 2. Сигнал Telegram, что приложение готово
         tg.ready();
         tg.expand();
 
-        let html5QrcodeScanner;
-
-        function startScanning() {
-            // Настраиваем сканер на поиск всех видов штрихкодов
-            html5QrcodeScanner = new Html5QrcodeScanner("reader", {
-                fps: 10,
-                qrbox: { width: 250, height: 150 }, // Прямоугольная область под штрихкод
-                formatsToSupport: [
-                    Html5QrcodeSupportedFormats.EAN_13,
-                    Html5QrcodeSupportedFormats.CODE_128,
-                    Html5QrcodeSupportedFormats.QR_CODE
-                ]
-            });
-
-            html5QrcodeScanner.render(onScanSuccess, onScanFailure);
-        }
-
-        function onScanSuccess(decodedText, decodedResult) {
-            // Звуковой или виброотклик от Telegram при успешном сканировании
-            if (tg.HapticFeedback) {
-                tg.HapticFeedback.notificationOccurred('success');
+        function scanBarcode() {
+            try {
+                // 3. Вызов встроенного сканера через официальный метод
+                tg.showScanQrPopup({ text: "Наведите камеру на штрихкод товара" }, function(text) {
+                    alert("Считан код: " + text);
+                    tg.closeScanQrPopup();
+                    return true;
+                });
+            } catch (error) {
+                alert("Ошибка запуска сканера: " + error.message);
             }
-
-            alert("Штрихкод считан: " + decodedText);
-
-            // Выключаем камеру после успешного чтения
-            html5QrcodeScanner.clear();
-        }
-
-        function onScanFailure(error) {
-            // Сюда попадают логи поиска линий (можно оставить пустым, чтобы не спамить)
-            console.warn(`Ошибка сканирования: ${error}`);
         }
     </script>
 </body>

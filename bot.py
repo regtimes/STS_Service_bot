@@ -1,86 +1,100 @@
 import sqlite3
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
-
 import os
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse
 from dotenv import load_dotenv
-from telebot import TeleBot
+from telebot import TeleBot, types
 
-load_dotenv() # Загружает данные из файла .env
+# 1. Загрузка настроек окружения
+load_dotenv()
 
-app = FastAPI()
+# Ваша актуальная ссылка ngrok (измените, если в консоли ngrok она другая)
+WEBHOOK_URL = "https://frosting-suffix-corporate.ngrok-free.dev/webhook"
 
-
-@app.get("/", response_class=HTMLResponse)
-async def read_item():
-    # Находим путь к вашему файлу index.html
-    path_to_html = os.path.join(os.path.dirname(__file__), "index.html")
-
-    with open(path_to_html, "r", encoding="utf-8") as file:
-        html_content = file.read()
-
-    return HTMLResponse(content=html_content, status_code=200)
-
-
-
-TOKEN = os.getenv("TOKEN") # Безопасно берет токен из системы
+TOKEN = os.getenv("TOKEN")
 bot = TeleBot(TOKEN)
 
 
-
-# 1. Инициализация базы данных склад.db
+# 2. Инициализация базы данных sklad.db
 def init_db():
     conn = sqlite3.connect("sklad.db")
     cursor = conn.cursor()
-    # Создаем таблицу товаров, если её еще нет
     cursor.execute("""
-                   CREATE TABLE IF NOT EXISTS items
-                   (
-                       id
-                       INTEGER
-                       PRIMARY
-                       KEY
-                       AUTOINCREMENT,
-                       name
-                       TEXT
-                       UNIQUE,
-                       quantity
-                       INTEGER
-                       DEFAULT
-                       0
-                   )
-                   """)
+        CREATE TABLE IF NOT EXISTS items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE,
+            quantity INTEGER DEFAULT 0
+        )
+    """)
     conn.commit()
     conn.close()
 
 
-# 2. Функция добавления/обновления товара
+# 3. Функция добавления/обновления товара
 def add_to_sklad(name, qty):
     conn = sqlite3.connect("sklad.db")
     cursor = conn.cursor()
-    # Если товар есть — прибавим количество, если нет — создадим
     cursor.execute("""
-                   INSERT INTO items (name, quantity)
-                   VALUES (?, ?) ON CONFLICT(name) DO
-                   UPDATE SET quantity = quantity + ?
-                   """, (name, qty, qty))
+        INSERT INTO items (name, quantity)
+        VALUES (?, ?) ON CONFLICT(name) DO
+        UPDATE SET quantity = quantity + ?
+    """, (name, qty, qty))
     conn.commit()
     conn.close()
 
 
-# Обработка команды /start
+# 4. Менеджер жизненного цикла приложения (вместо устаревшего on_event)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Код, который выполняется ПРИ СТАРТЕ сервера
+    init_db()
+    bot.remove_webhook()
+    bot.set_webhook(url=WEBHOOK_URL)
+    print("🚀 Сервер и вебхук Telegram успешно настроены через lifespan!")
+    yield
+    # Код, который выполняется ПРИ ОСТАНОВКЕ сервера (если необходим)
+
+
+# Передаем управление жизненным циклом в FastAPI
+app = FastAPI(lifespan=lifespan)
+
+
+# 5. Эндпоинт для Mini App (выдача вашей HTML страницы)
+@app.get("/", response_class=HTMLResponse)
+async def read_item():
+    path_to_html = os.path.join(os.path.dirname(__file__), "index.html")
+    with open(path_to_html, "r", encoding="utf-8") as file:
+        html_content = file.read()
+    return HTMLResponse(content=html_content, status_code=200)
+
+
+# 6. Эндпоинт вебхука, который принимает сообщения от Telegram
+@app.post("/webhook")
+async def telegram_webhook(request: Request):
+    if request.headers.get("content-type") == "application/json":
+        json_string = await request.json()
+        update = types.Update.de_json(json_string)
+        bot.process_new_updates([update])  # Передаем текстовые команды боту
+        return {"status": "ok"}
+    return {"status": "error"}
+
+
+# =====================================================================
+# ОБРАБОТЧИКИ КОМАНД ТЕЛЕГРАМ-БОТА
+# =====================================================================
+
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
     bot.reply_to(message, "Привет! Чтобы добавить товар, напиши: /add Название Количество")
 
 
-# Обработка команды /add (например: /add Коробки 15)
 @bot.message_handler(commands=['add'])
 def add_cmd(message):
     try:
-        parts = message.text.split()  # Разрезает строку "/add Кирпич 50" по пробелам
-        name = parts[1]  # Берет второе слово (название товара)
-        qty = int(parts[2])  # Берет третье слово (количество) и делает его числом
+        parts = message.text.split()
+        name = parts[1]  # Добавили [1]
+        qty = int(parts[2])  # Добавили [2]
 
         add_to_sklad(name, qty)
         bot.reply_to(message, f"✅ Успешно добавлено: {name} ({qty} шт.)")
@@ -89,12 +103,10 @@ def add_cmd(message):
 
 
 
-# Обработка команды /list для просмотра всего склада
 @bot.message_handler(commands=['list'])
 def list_cmd(message):
     conn = sqlite3.connect("sklad.db")
     cursor = conn.cursor()
-    # Выбираем все товары из таблицы items
     cursor.execute("SELECT name, quantity FROM items")
     rows = cursor.fetchall()
     conn.close()
@@ -103,18 +115,16 @@ def list_cmd(message):
         bot.reply_to(message, "📦 Склад пуст!")
         return
 
-    # Формируем красивый текст списка
     text = "📋 **Текущие остатки на складе:**\n\n"
     for row in rows:
-        text += f"🔹 {row[0]}: {row[1]} шт.\n"
+        text += f"🔹 {row[0]}: {row[1]} шт.\n"  # Добавили [0] и [1]
 
     bot.reply_to(message, text, parse_mode="Markdown")
 
 
 
+
+# Запуск через зелёную кнопку "Старт" в PyCharm (поднимает uvicorn)
 if __name__ == "__main__":
-    init_db()  # Запускаем БД
-    print("Бот успешно запущен локально...")
-    bot.infinity_polling()
-
-
+    import uvicorn
+    uvicorn.run("bot:app", host="127.0.0.1", port=8000, reload=True)
