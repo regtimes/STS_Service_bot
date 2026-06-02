@@ -3,3 +3,4 @@ sklad.db
 .idea/
 .env
 *.iml
+warehouse_bot.db

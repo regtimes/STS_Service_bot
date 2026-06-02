@@ -3,40 +3,194 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Склад STS</title>
-    <!-- ПРАВИЛЬНОЕ ПОДКЛЮЧЕНИЕ SDK TELEGRAM -->
+    <title>Логистика STS</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
-        body { font-family: sans-serif; background: var(--tg-theme-bg-color); color: var(--tg-theme-text-color); text-align: center; padding: 20px; }
-        button { background: var(--tg-theme-button-color); color: var(--tg-theme-button-text-color); border: none; padding: 12px 20px; border-radius: 8px; font-size: 16px; cursor: pointer; margin-top: 20px; }
+        :root {
+            --bg-color: var(--tg-theme-bg-color, #ffffff);
+            --text-color: var(--tg-theme-text-color, #000000);
+            --hint-color: var(--tg-theme-hint-color, #aaaaaa);
+            --btn-color: var(--tg-theme-button-color, #2481cc);
+            --btn-text: var(--tg-theme-button-text-color, #ffffff);
+            --secondary-bg: var(--tg-theme-secondary-bg-color, #efefef);
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            padding: 16px;
+            margin: 0;
+            box-sizing: border-box;
+        }
+        h2 { margin-top: 10px; font-size: 22px; }
+        .form-group { text-align: left; margin-bottom: 14px; }
+        label { display: block; font-weight: bold; margin-bottom: 6px; font-size: 14px; }
+        input, select, textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid var(--hint-color);
+            border-radius: 8px;
+            background: var(--bg-color);
+            color: var(--text-color);
+            font-size: 15px;
+            box-sizing: border-box;
+        }
+        textarea { resize: vertical; height: 70px; }
+        .scan-btn {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 10px;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+            width: 100%;
+            margin-bottom: 15px;
+            font-weight: bold;
+        }
+        .main-btn {
+            background: var(--btn-color);
+            color: var(--btn-text);
+            border: none;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            width: 100%;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        .badge {
+            background: var(--secondary-bg);
+            padding: 6px;
+            border-radius: 6px;
+            display: inline-block;
+            margin-bottom: 10px;
+            font-size: 13px;
+        }
     </style>
 </head>
 <body>
-    <h2>📦 Складской терминал STS</h2>
-    <p>Добро пожаловать в систему учета остатков!</p>
 
-    <!-- Кнопка вызова встроенного сканера Telegram -->
-    <button onclick="scanBarcode()">Сканировать штрихкод</button>
+    <h2>📦 Логистика терминала STS</h2>
+    <div id="action-type" class="badge">Режим: Оформление перемещения</div>
+
+    <!-- Кнопка сканирования штрихкода -->
+    <button class="scan-btn" onclick="scanBarcode()">📷 Сканировать штрихкод оборудования</button>
+
+    <form id="logistic-form" onsubmit="sendData(event)">
+        <!-- Поле штрихкода (заполняется из сканера или вручную) -->
+        <div class="form-group">
+            <label for="barcode">Штрихкод / Серийный номер</label>
+            <input type="text" id="barcode" placeholder="Отсканируйте или введите вручную" required>
+        </div>
+
+        <!-- Выбор названия инвентаря с возможностью ручного ввода/редактирования -->
+        <div class="form-group">
+            <label for="device-name">Оборудование</label>
+            <select id="device-select" onchange="checkCustomDevice(this)">
+                <option value="Монитор">Монитор</option>
+                <option value="РДМ">РДМ</option>
+                <option value="КФ">КФ</option>
+                <option value="Каскад">Каскад</option>
+                <option value="custom">-- Другое название (Ввести вручную) --</option>
+            </select>
+            <input type="text" id="custom-device-name" placeholder="Введите название" style="display: none; margin-top: 8px;">
+        </div>
+
+        <!-- Куда направляется инвентарь -->
+        <div class="form-group">
+            <label for="destination">Куда отправляем (Адресат)</label>
+            <select id="destination" required>
+                <option value="Склад">Центральный склад</option>
+                <option value="Куратор региона">Куратор региона сети</option>
+                <option value="АЗС №1">АЗС №1</option>
+                <option value="АЗС №2">АЗС №2</option>
+                <option value="АЗС №3">АЗС №3</option>
+                <option value="АЗС №5">АЗС №5</option>
+            </select>
+        </div>
+
+        <!-- Состояние устройства -->
+        <div class="form-group">
+            <label for="condition">Состояние инвентаря</label>
+            <select id="condition" onchange="toggleDamageDescription(this)">
+                <option value="Работает">✅ Работает исправно</option>
+                <option value="Неисправен">❌ Неисправен / Требует ремонта</option>
+            </select>
+        </div>
+
+        <!-- Описание поломки (показывается только если выбран статус "Неисправен") -->
+        <div class="form-group" id="damage-group" style="display: none;">
+            <label for="damage-text">Описание неисправности</label>
+            <textarea id="damage-text" placeholder="Опишите, что именно сломалось или ведет себя некорректно..."></textarea>
+        </div>
+
+        <button type="submit" class="main-btn">🚀 Отправить данные в чат</button>
+    </form>
 
     <script>
-        // 1. Инициализация объекта
         const tg = window.Telegram.WebApp;
-
-        // 2. Сигнал Telegram, что приложение готово
         tg.ready();
         tg.expand();
 
+        // Динамический вывод ручного ввода названия, если его нет в списке
+        function checkCustomDevice(select) {
+            const customInput = document.getElementById('custom-device-name');
+            if (select.value === 'custom') {
+                customInput.style.display = 'block';
+                customInput.required = true;
+            } else {
+                customInput.style.display = 'none';
+                customInput.required = false;
+            }
+        }
+
+        // Показываем текстовое поле поломки, только если статус "Неисправен"
+        function toggleDamageDescription(select) {
+            const damageGroup = document.getElementById('damage-group');
+            damageGroup.style.display = select.value === 'Неисправен' ? 'block' : 'none';
+        }
+
+        // Функция вызова родного сканера Telegram
         function scanBarcode() {
-            try {
-                // 3. Вызов встроенного сканера через официальный метод
-                tg.showScanQrPopup({ text: "Наведите камеру на штрихкод товара" }, function(text) {
-                    alert("Считан код: " + text);
+            if (tg.showScanQrPopup) {
+                tg.showScanQrPopup({ text: "Наведите камеру на штрихкод устройства" }, function(text) {
+                    document.getElementById('barcode').value = text;
                     tg.closeScanQrPopup();
                     return true;
                 });
-            } catch (error) {
-                alert("Ошибка запуска сканера: " + error.message);
+            } else {
+                alert("Сканер недоступен в этой версии Telegram. Введите код вручную.");
             }
+        }
+
+        // Сбор данных формы и отправка их обратно в бота через tg.sendData
+        function sendData(event) {
+            event.preventDefault();
+
+            const barcode = document.getElementById('barcode').value;
+            const selectDevice = document.getElementById('device-select').value;
+            const customDevice = document.getElementById('custom-device-name').value;
+            const deviceName = selectDevice === 'custom' ? customDevice : selectDevice;
+
+            const destination = document.getElementById('destination').value;
+            const condition = document.getElementById('condition').value;
+            const damageDescription = condition === 'Неисправен' ? document.getElementById('damage-text').value : '';
+
+            // Формируем аккуратный JSON-пакет для передачи в Python
+            const resultData = {
+                action: "send_inventory",
+                barcode: barcode,
+                name: deviceName,
+                destination: destination,
+                status: condition,
+                description: damageDescription
+            };
+
+            // Метод tg.sendData превращает JSON в строку и "кидает" обратно в бота
+            tg.sendData(JSON.stringify(resultData));
+            tg.close(); // Закрываем Web App окно автоматически
         }
     </script>
 </body>

@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import json
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
@@ -9,122 +10,197 @@ from telebot import TeleBot, types
 # 1. Загрузка настроек окружения
 load_dotenv()
 
-# Ваша актуальная ссылка ngrok (измените, если в консоли ngrok она другая)
+# Вставьте сюда вашу АКТУАЛЬНУЮ ссылку из консоли ngrok
 WEBHOOK_URL = "https://frosting-suffix-corporate.ngrok-free.dev/webhook"
+BASE_URL = WEBHOOK_URL.replace('/webhook', '')
 
 TOKEN = os.getenv("TOKEN")
 bot = TeleBot(TOKEN)
+DB_NAME = "warehouse_bot.db"
 
 
-# 2. Инициализация базы данных sklad.db
-def init_db():
-    conn = sqlite3.connect("sklad.db")
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS items (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE,
-            quantity INTEGER DEFAULT 0
-        )
-    """)
-    conn.commit()
-    conn.close()
+# Проверка роли пользователя в БД
+def get_user_role(telegram_id: int):
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("SELECT role FROM users WHERE telegram_id = ?", (telegram_id,))
+        result = cursor.fetchone()
+        conn.close()
+        return result[0] if result else None
+    except Exception as e:
+        print(f"Ошибка БД: {e}")
+        return None
 
 
-# 3. Функция добавления/обновления товара
-def add_to_sklad(name, qty):
-    conn = sqlite3.connect("sklad.db")
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO items (name, quantity)
-        VALUES (?, ?) ON CONFLICT(name) DO
-        UPDATE SET quantity = quantity + ?
-    """, (name, qty, qty))
-    conn.commit()
-    conn.close()
+# Регистрация нового сотрудника через "Офис"
+def register_new_user(telegram_id: int, name: str, role: str):
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("""
+                       INSERT
+                       OR IGNORE INTO users (telegram_id, name, role, region_id)
+            VALUES (?, ?, ?, 'Не указан')
+                       """, (telegram_id, name, role))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Ошибка регистрации: {e}")
+        return False
 
 
-# 4. Менеджер жизненного цикла приложения (вместо устаревшего on_event)
+# 2. Жизненный цикл FastAPI
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Код, который выполняется ПРИ СТАРТЕ сервера
-    init_db()
     bot.remove_webhook()
     bot.set_webhook(url=WEBHOOK_URL)
-    print("🚀 Сервер и вебхук Telegram успешно настроены через lifespan!")
+    print("🚀 Сервер запущен по правильной логике! Вебхук привязан.")
     yield
-    # Код, который выполняется ПРИ ОСТАНОВКЕ сервера (если необходим)
 
 
-# Передаем управление жизненным циклом в FastAPI
 app = FastAPI(lifespan=lifespan)
 
 
-# 5. Эндпоинт для Mini App (выдача вашей HTML страницы)
+# 3. Выдача HTML-страницы для Кабинета "Офис" и Форм
 @app.get("/", response_class=HTMLResponse)
-async def read_item():
-    path_to_html = os.path.join(os.path.dirname(__file__), "index.html")
-    with open(path_to_html, "r", encoding="utf-8") as file:
-        html_content = file.read()
-    return HTMLResponse(content=html_content, status_code=200)
+async def read_html():
+    path_to_html = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
+    if not os.path.exists(path_to_html):
+        path_to_html = os.path.join(os.getcwd(), "index.html")
+
+    if os.path.exists(path_to_html):
+        with open(path_to_html, "r", encoding="utf-8") as file:
+            return HTMLResponse(content=file.read(), status_code=200)
+    return HTMLResponse(content="<h3>Файл index.html не найден</h3>", status_code=404)
 
 
-# 6. Эндпоинт вебхука, который принимает сообщения от Telegram
+# 4. Прием вебхуков от Telegram
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
     if request.headers.get("content-type") == "application/json":
         json_string = await request.json()
         update = types.Update.de_json(json_string)
-        bot.process_new_updates([update])  # Передаем текстовые команды боту
+        bot.process_new_updates([update])
         return {"status": "ok"}
     return {"status": "error"}
 
 
 # =====================================================================
-# ОБРАБОТЧИКИ КОМАНД ТЕЛЕГРАМ-БОТА
+# ОБРАБОТЧИКИ ТЕЛЕГРАМ-БОТА (ТЕКСТ И КНОПКИ)
 # =====================================================================
 
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
-    bot.reply_to(message, "Привет! Чтобы добавить товар, напиши: /add Название Количество")
+    # Принудительно чистим старый кэш
+    bot.send_message(message.chat.id, "Обновление конфигурации кнопок...", reply_markup=types.ReplyKeyboardRemove())
+
+    # 1. Нижнее меню — ОБЫЧНЫЕ ТЕКСТОВЫЕ КНОПКИ (как было в начале)
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    btn_send = types.KeyboardButton("📤 Отправить")
+    btn_receive = types.KeyboardButton("📥 Получить")
+    markup.add(btn_send, btn_receive)
+
+    # 2. Меню "Офис" СЛЕВА от поля ввода (Открывает личный кабинет)
+    web_office = types.WebAppInfo(url=f"{BASE_URL}/")
+    bot.set_chat_menu_button(
+        chat_id=message.chat.id,
+        menu_button=types.MenuButtonWebApp(type="web_app", text="🏢 Офис", web_app=web_office)
+    )
+
+    bot.send_message(
+        message.chat.id,
+        "🤖 Бот STS готов к работе.\n\n"
+        "• Нажимайте кнопки внизу чата для логистики.\n"
+        "• Кнопка «Офис» слева внизу откроет личный кабинет или форму регистрации.",
+        reply_markup=markup
+    )
 
 
-@bot.message_handler(commands=['add'])
-def add_cmd(message):
+# Логика обработки нажатий обычных нижних кнопок чата
+@bot.message_handler(func=lambda message: True)
+def handle_text_buttons(message):
+    if message.text == "📤 Отправить":
+        # Создаем кнопку вызова сканера камеры ПРЯМО в сообщении чата
+        inline_markup = types.InlineKeyboardMarkup()
+        web_scan = types.WebAppInfo(url=f"{BASE_URL}/")  # Откроет HTML, где сработает камера
+        inline_markup.add(types.InlineKeyboardButton("📷 Открыть камеру-сканер", web_app=web_scan))
+
+        bot.send_message(
+            message.chat.id,
+            "Для оформления отправки нажмите на кнопку ниже и отсканируйте штрихкод устройства:",
+            reply_markup=inline_markup
+        )
+
+    elif message.text == "📥 Получить":
+        inline_markup = types.InlineKeyboardMarkup()
+        web_scan = types.WebAppInfo(url=f"{BASE_URL}/")
+        inline_markup.add(types.InlineKeyboardButton("📷 Сканировать код при приемке", web_app=web_scan))
+
+        bot.send_message(
+            message.chat.id,
+            "Для подтверждения получения нажмите на кнопку ниже:",
+            reply_markup=inline_markup
+        )
+
+
+# 5. ПРИЕМ ДАННЫХ ИЗ HTML (Регистрация или Данные формы перемещения)
+@bot.message_handler(content_types=['web_app_data'])
+def handle_web_app_data(message):
     try:
-        parts = message.text.split()
-        name = parts[1]  # Добавили [1]
-        qty = int(parts[2])  # Добавили [2]
+        data = json.loads(message.web_app_data.data)
+        action = data.get("action")
 
-        add_to_sklad(name, qty)
-        bot.reply_to(message, f"✅ Успешно добавлено: {name} ({qty} шт.)")
-    except Exception:
-        bot.reply_to(message, "❌ Ошибка. Пишите так: `/add Кирпич 50`")
+        # ЕСЛИ ЭТО РЕГИСТРАЦИЯ ИЗ КАБИНЕТА ОФИС
+        if action == "register":
+            user_name = data.get("name")
+            user_role = data.get("role")
+
+            success = register_new_user(message.from_user.id, user_name, user_role)
+            if success:
+                bot.send_message(
+                    message.chat.id,
+                    f"🎉 **Регистрация успешна!**\n\nСотрудник: *{user_name}*\nВыбранная роль: *{user_role}*\nТеперь при открытии «Офиса» вам будет доступно рабочее меню вашей роли.",
+                    parse_mode="Markdown"
+                )
+            else:
+                bot.send_message(message.chat.id, "❌ Ошибка при сохранении данных регистрации.")
+
+        # ЕСЛИ ЭТО ОТПРАВКА ИНВЕНТАРЯ ИЗ КАМЕРЫ-ФОРМЫ
+        elif action == "send":
+            barcode = data.get("barcode")
+            name = data.get("name")
+            destination = data.get("destination")
+            status = data.get("status")
+            desc = data.get("description", "")
+
+            msg_text = (
+                f"🚨 **Оформлена отправка инвентаря!**\n\n"
+                f"📦 Устройство: *{name}*\n"
+                f"🔢 Штрихкод: `{barcode}`\n"
+                f"📍 Направление: *{destination}*\n"
+                f"⚙️ Состояние: *{status}*\n"
+            )
+            if desc: msg_text += f"⚠️ Поломка: _{desc}_\n"
+            msg_text += "\n⏳ *Ожидание подтверждения адресатом...*"
+
+            bot.send_message(message.chat.id, msg_text, parse_mode="Markdown")
+
+        # ЕСЛИ ЭТО ПРИЕМКА ИНВЕНТАРЯ
+        elif action == "receive":
+            barcode = data.get("barcode")
+            bot.send_message(
+                message.chat.id,
+                f"✅ **Успешная приемка!**\n\nУстройство со штрихкодом `{barcode}` успешно получено сотрудником. База данных обновлена.",
+                parse_mode="Markdown"
+            )
+
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ Ошибка обработки: {str(e)}")
 
 
-
-@bot.message_handler(commands=['list'])
-def list_cmd(message):
-    conn = sqlite3.connect("sklad.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT name, quantity FROM items")
-    rows = cursor.fetchall()
-    conn.close()
-
-    if not rows:
-        bot.reply_to(message, "📦 Склад пуст!")
-        return
-
-    text = "📋 **Текущие остатки на складе:**\n\n"
-    for row in rows:
-        text += f"🔹 {row[0]}: {row[1]} шт.\n"  # Добавили [0] и [1]
-
-    bot.reply_to(message, text, parse_mode="Markdown")
-
-
-
-
-# Запуск через зелёную кнопку "Старт" в PyCharm (поднимает uvicorn)
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run("bot:app", host="127.0.0.1", port=8000, reload=True)
